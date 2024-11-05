@@ -62,40 +62,47 @@ def read_channel(channel, previous_data):
 
 
 # Map letters to indices
-letters = list(string.ascii_uppercase)  # ['A', 'B', ..., 'Z']
+letters = ['A', 'B', 'C', 'D']
 
-# Prepare data array: shape (26 letters, 50 inputs per letter, 300 data points)
-# Each data point is an integer, so we can use numpy arrays
-N_letters = 26
+# Prepare data array: shape (4 letters, 50 inputs per letter, variable data points)
+# Initialize with an estimated maximum size (you may need to adjust N_v_max based on your system's performance)
+N_letters = 4
 N_training = 50
-N_v = 300  # 5 sensors * 10 measurements * 6 data points
-data_array = np.zeros((N_letters, N_training, N_v), dtype=int)
+N_v_max = 5000  # Estimated maximum number of data points
+data_array = np.zeros((N_letters, N_training, N_v_max), dtype=int)
 
 def collect_single_letter(letter, input_idx):
     input(f"Press Enter and perform the ASL movement for letter '{letter}' ({input_idx+1}/{N_training})...")
     collected_data = []
     previous_data_list = [None]*5  # For each sensor
-    # Collect data over 10 measurement cycles
-    for measurement_idx in range(10):
+    start_time = time.time()
+    read_counts = 0
+    while time.time() - start_time < 1.5:
         for sensor_idx in range(5):  # Sensors 0 to 4
             delta, data = read_channel(sensor_idx, previous_data_list[sensor_idx])
             previous_data_list[sensor_idx] = data
             # Collect delta data
             delta_values = list(delta.values())  # 6 data points
             collected_data.extend(delta_values)
+        read_counts += 1
         time.sleep(0.02)  # 20 ms delay
+    print(f"Number of times data was read from all five sensors: {read_counts}")
     return collected_data
+
 
 try:
     for letter_idx, letter in enumerate(letters):
         print(f"\nCollecting data for letter '{letter}'")
         for input_idx in range(N_training):
             collected_data = collect_single_letter(letter, input_idx)
-            # Ensure we have exactly 300 data points
-            if len(collected_data) != N_v:
-                print(f"Warning: Collected {len(collected_data)} data points instead of {N_v}")
-                # Pad or truncate the data to fit N_v
-                collected_data = (collected_data + [0]*N_v)[:N_v]
+            # Ensure we have exactly N_v_max data points
+            collected_length = len(collected_data)
+            if collected_length > N_v_max:
+                print(f"Warning: Collected {collected_length} data points exceeds maximum of {N_v_max}. Truncating data.")
+                collected_data = collected_data[:N_v_max]
+            elif collected_length < N_v_max:
+                print(f"Warning: Collected {collected_length} data points is less than maximum of {N_v_max}. Padding data.")
+                collected_data.extend([0]*(N_v_max - collected_length))
             data_array[letter_idx, input_idx, :] = collected_data
             print(f"Collected data for letter '{letter}' input {input_idx+1}/{N_training}")
         print(f"Finished collecting data for letter '{letter}'")
