@@ -90,12 +90,12 @@ def read_channel(channel, previous_data):
     if previous_data is not None:
         delta = {key: data[key] - previous_data[key] for key in data}
     else:
-        delta = data  # For the first read, use raw data as delta
+        delta = {key: 0 for key in data}  # For the first read, use raw data as delta
     return delta, data
 
 
 # Map letters to indices
-letters = string.ascii_uppercase[5:]
+letters = string.ascii_uppercase[:2]
 
 print(f'Collecting data for American Sign Language (ASL) letters: {letters}')
 
@@ -162,5 +162,4 @@ except KeyboardInterrupt:
 finally:
     bus.close()
     # Save data_array to a file if desired
-    np.save('asl_data_2.npy', data_array)
-    print("\nData collection complete. Data saved to 'asl_data_2.npy'")
+    print("\nData collection complete.")
