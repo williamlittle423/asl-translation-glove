@@ -3,6 +3,7 @@ import time
 import numpy as np
 import string
 import argparse
+import math
 
 # Step 1: Create the parser
 parser = argparse.ArgumentParser(description="ASL training script.")
@@ -99,7 +100,7 @@ letters = string.ascii_uppercase[:2]
 
 print(f'Collecting data for American Sign Language (ASL) letters: {letters}')
 
-# Prepare data array: shape (4 letters, 30 inputs per letter, variable data points)
+# Prepare data array: shape (2 letters, 40 inputs per letter, 160 data points)
 N_letters = len(letters)
 N_training = 40
 N_v_max = 32 * 5 * 6  # Estimated maximum number of data points
@@ -132,6 +133,11 @@ def collect_single_letter(letter, input_idx, retry_count=0):
     print(f"Number of times data was read from all five sensors: {read_counts}")
     return collected_data
 
+# Initialize table header
+print("\nData Collection Summary:")
+print(f"{'Letter':<8} {'Input':<6} {'Sum Delta':<12} {'Sum Accel Mag':<18} {'Sum Gyro Mag':<17}")
+print("-" * 65)
+
 try:
     for letter_idx, letter in enumerate(letters):
         print(f"\nCollecting data for letter '{letter}'")
@@ -151,7 +157,31 @@ try:
             data_array[letter_idx, input_idx, :] = collected_data
             print(f"Collected data for letter '{letter}' input {input_idx+1}/{N_training}")
             
-        # Save data for each letter to a file)
+            # Calculate Sum Delta
+            sum_delta = sum(collected_data)
+            
+            # Calculate Sum Acceleration Magnitude and Sum Gyroscope Magnitude
+            sum_accel_mag = 0.0
+            sum_gyro_mag = 0.0
+            for sensor in range(5):
+                base_idx = sensor * 6
+                accel_x = collected_data[base_idx + 0]
+                accel_y = collected_data[base_idx + 1]
+                accel_z = collected_data[base_idx + 2]
+                gyro_x = collected_data[base_idx + 3]
+                gyro_y = collected_data[base_idx + 4]
+                gyro_z = collected_data[base_idx + 5]
+                
+                accel_mag = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
+                gyro_mag = math.sqrt(gyro_x**2 + gyro_y**2 + gyro_z**2)
+                
+                sum_accel_mag += accel_mag
+                sum_gyro_mag += gyro_mag
+            
+            # Print the table row
+            print(f"{letter:<8} {input_idx+1:<6} {sum_delta:<12} {sum_accel_mag:<18.2f} {sum_gyro_mag:<17.2f}")
+            
+        # Save data for each letter to a file
         print(f"Finished collecting data for letter '{letter}'")
         letter_data = data_array[letter_idx, :, :]
         np.save(f'asl_data_{letter}_{args.name}.npy', letter_data)
