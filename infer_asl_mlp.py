@@ -34,6 +34,17 @@ class MLP(nn.Module):
         
         out = self.fc3(out)
         return out
+    
+def play_audio(letter):
+    audio_path = f"audio_files/{letter}.wav"
+    try:
+        wave_obj = sa.WaveObject.from_wave_file(audio_path)
+        play_obj = wave_obj.play()
+        play_obj.wait_done()  # Wait for playback to finish
+    except FileNotFoundError:
+        print(f"Audio file for '{letter}' not found at {audio_path}.")
+    except Exception as e:
+        print(f"Error playing audio for '{letter}': {e}")
 
 # Step 2: Define Command-Line Arguments
 parser = argparse.ArgumentParser(description="ASL Inference Script using Trained MLP Model.")
@@ -269,6 +280,7 @@ def main():
             if max_prob >= args.threshold:
                 predicted_letter = args.letters[predicted_class]
                 print(f"Predicted Letter: {predicted_letter} (Confidence: {max_prob * 100:.2f}%)\n")
+                play_audio(predicted_letter)  # Play audio for the predicted letter
             else:
                 print(f"No confident prediction made (Highest Confidence: {max_prob * 100:.2f}%)\n")
     except KeyboardInterrupt:
@@ -276,6 +288,7 @@ def main():
     finally:
         bus.close()
         print("I2C bus closed. Goodbye!")
+
 
 if __name__ == "__main__":
     main()
