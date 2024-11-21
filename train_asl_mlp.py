@@ -6,11 +6,12 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.optim as optim
+import joblib  # Import moved to the top for better practice
 
 # Step 1: Load and preprocess the data
 
-# Path to the CSV file
-DATA_PATH = 'asl_data_noname.csv'  # Replace with your actual file path
+# Path to the merged CSV file
+DATA_PATH = 'asl_data_eric.csv'  # Replace with your actual merged file path
 
 # Load the dataset
 df = pd.read_csv(DATA_PATH)
@@ -19,27 +20,38 @@ df = pd.read_csv(DATA_PATH)
 print("First five rows of the dataset:")
 print(df.head())
 
-# Filter the dataset to include only letters A-D
-df = df[df['Letter'].isin(['A', 'B', 'C', 'D'])]
+# OPTIONAL: If you need to filter specific labels, uncomment and modify the following lines
+# For example, to include letters A-L and words 'milk', 'want'
+# labels_to_include = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'milk', 'want']
+# df = df[df['Label'].isin(labels_to_include)]
 
-# Reset index after filtering
+# If your merged dataset already contains only the desired labels, you can skip filtering
+
+# Reset index after filtering (if any)
 df.reset_index(drop=True, inplace=True)
 
-print(f"\nDataset shape after filtering: {df.shape}")
+print(f"\nDataset shape after loading: {df.shape}")
 
-# Encode the labels (Letters A-D) to numerical values (0-3)
+# Check if 'Label' column exists
+if 'Label' not in df.columns:
+    print("Error: The dataset does not contain a 'Label' column.")
+    print(f"Available columns: {df.columns.tolist()}")
+    sys.exit(1)
+
+# Encode the labels (Letters A-L and Words) to numerical values
 label_encoder = LabelEncoder()
-df['Label'] = label_encoder.fit_transform(df['Letter'])
+df['Encoded_Label'] = label_encoder.fit_transform(df['Label'])
 
 # Display the mapping
 label_mapping = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
 print("\nLabel Encoding Mapping:")
-print(label_mapping)
+for label, encoded in label_mapping.items():
+    print(f"{label}: {encoded}")
 
-# Features: All columns except 'Letter', 'Input', and 'Label'
-feature_columns = [col for col in df.columns if col not in ['Letter', 'Input', 'Label']]
+# Features: All columns except 'Label', 'Input', and 'Encoded_Label'
+feature_columns = [col for col in df.columns if col not in ['Label', 'Input', 'Encoded_Label']]
 X = df[feature_columns].values
-y = df['Label'].values
+y = df['Encoded_Label'].values
 
 print(f"\nNumber of samples: {X.shape[0]}")
 print(f"Number of features per sample: {X.shape[1]}")
@@ -93,7 +105,7 @@ class MLP(nn.Module):
         self.fc2 = nn.Linear(hidden_sizes[0], hidden_sizes[1])
         self.relu2 = nn.ReLU()
         
-        self.fc3 = nn.Linear(hidden_sizes[1], num_classes)
+        self.fc3 = nn.Linear(hidden_sizes[1], num_classes)  # num_classes will be dynamic
         
     def forward(self, x):
         out = self.fc1(x)
@@ -105,10 +117,10 @@ class MLP(nn.Module):
         out = self.fc3(out)
         return out
 
-# Define model parameters
-INPUT_SIZE = X_train_scaled.shape[1]  # Number of features (30)
+# Define model parameters dynamically based on the dataset
+INPUT_SIZE = X_train_scaled.shape[1]  # Number of features
 HIDDEN_SIZES = [64, 32]                # Two hidden layers
-NUM_CLASSES = 4                        # Letters A-D
+NUM_CLASSES = len(label_encoder.classes_)  # Dynamic number of classes based on labels
 
 # Instantiate the model
 model = MLP(INPUT_SIZE, HIDDEN_SIZES, NUM_CLASSES)
@@ -198,11 +210,15 @@ train_model(model, train_loader, criterion, optimizer, device, num_epochs=NUM_EP
 test_accuracy = evaluate_model(model, test_loader, device)
 
 # Save the trained model
-MODEL_PATH = 'asl_mlp_model.pth'
+MODEL_PATH = 'asl_mlp_model_eric_A-L-Words.pth'  # Updated filename to reflect inclusion of words
 torch.save(model.state_dict(), MODEL_PATH)
 print(f"\nModel saved to {MODEL_PATH}")
 
-import joblib
-# After fitting the scaler
+# Save the scaler to disk
 print("Saving the scaler to disk...")
-joblib.dump(scaler, 'asl_scaler.save')
+joblib.dump(scaler, 'asl_scaler_eric.save')  # Updated filename for clarity
+print("Scaler saved to 'asl_scaler_eric.save'")
+
+# Save the label encoder for future use
+joblib.dump(label_encoder, 'asl_label_encoder_eric.save')
+print("Label encoder saved to 'asl_label_encoder_eric.save'")

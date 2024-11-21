@@ -12,8 +12,8 @@ parser = argparse.ArgumentParser(description="ASL training script with enhanced 
 
 # Step 2: Add arguments
 parser.add_argument("--name", type=str, help="Name of person collecting data", default='noname')
-parser.add_argument("--letters", type=str, nargs='+', help="List of letters to collect data for (e.g., A B C D)", default=['A', 'B', 'C', 'D'])
-parser.add_argument("--training_samples", type=int, help="Number of training samples per letter", default=40)
+parser.add_argument("--labels", type=str, nargs='+', help="List of labels to collect data for (e.g., A B C D or milk want)", default=['A', 'B', 'C', 'D'])
+parser.add_argument("--training_samples", type=int, help="Number of training samples per label", default=40)
 parser.add_argument("--time_steps", type=int, help="Number of time steps per sample", default=32)
 parser.add_argument("--retry_limit", type=int, help="Maximum number of retries for I2C communication", default=5)
 
@@ -131,17 +131,17 @@ def read_channel(channel, previous_data, retry_count=0):
         delta = {key: 0 for key in data}  # For the first read, use raw data as delta
     return delta, data
 
-# Map letters to indices
-letters = args.letters
+# Map labels to indices
+labels = args.labels
 
-print(f'Collecting data for American Sign Language (ASL) letters: {letters}')
+print(f'Collecting data for American Sign Language (ASL) labels: {labels}')
 
 # Prepare dataset list
 dataset = []
 
 # Parameters
-N_letters = len(letters)
-N_training = args.training_samples  # Number of samples per letter
+N_labels = len(labels)
+N_training = args.training_samples  # Number of samples per label
 N_time_steps = args.time_steps      # Number of time steps per sample
 N_v_max = N_time_steps * 5 * 6      # time_steps * 5 sensors * 6 data points (delta values)
 TIME_DELTA = 0.02                     # 20 ms between reads
@@ -149,11 +149,11 @@ TIME_DELTA = 0.02                     # 20 ms between reads
 # Maximum number of retries for a sample
 MAX_RETRIES = args.retry_limit
 
-def collect_single_letter(letter, input_idx, retry_count=0):
+def collect_single_label(label, input_idx, retry_count=0):
     if retry_count >= MAX_RETRIES:
-        print(f"Max retries exceeded for letter '{letter}' ({input_idx+1}/{N_training}). Skipping this sample.")
+        print(f"Max retries exceeded for label '{label}' ({input_idx+1}/{N_training}). Skipping this sample.")
         return None
-    input(f"Press Enter and perform the ASL movement for letter '{letter}' ({input_idx+1}/{N_training})...")
+    input(f"Press Enter and perform the ASL movement for label '{label}' ({input_idx+1}/{N_training})...")
     collected_data = []
     base_data_list = [None]*5  # For each sensor
     
@@ -162,8 +162,8 @@ def collect_single_letter(letter, input_idx, retry_count=0):
     for sensor_idx in range(5):  # Sensors 0 to 4
         delta, data = read_channel(sensor_idx, None, retry_count=0)
         if delta is None:
-            print('Attempting letter again due to sensor read error during base data collection')
-            return collect_single_letter(letter, input_idx, retry_count=retry_count+1)
+            print('Attempting label again due to sensor read error during base data collection')
+            return collect_single_label(label, input_idx, retry_count=retry_count+1)
         base_data_list[sensor_idx] = data
     print("Base data collection complete.")
     
@@ -175,8 +175,8 @@ def collect_single_letter(letter, input_idx, retry_count=0):
         for sensor_idx in range(5):  # Sensors 0 to 4
             delta, data = read_channel(sensor_idx, previous_data_list[sensor_idx], retry_count=0)
             if delta is None:
-                print('Attempting letter again due to sensor read error during delta collection')
-                return collect_single_letter(letter, input_idx, retry_count=retry_count+1)
+                print('Attempting label again due to sensor read error during delta collection')
+                return collect_single_label(label, input_idx, retry_count=retry_count+1)
             previous_data_list[sensor_idx] = data
             # Collect delta data
             delta_values = list(delta.values())  # 6 data points
@@ -188,7 +188,7 @@ def collect_single_letter(letter, input_idx, retry_count=0):
 
 # Initialize table header
 print("\nData Collection Summary:")
-header = ["Letter", "Input"]
+header = ["Label", "Input"]
 for sensor in range(1, 6):
     header.extend([
         f"S{sensor}_MeanAccelMag",
@@ -202,12 +202,12 @@ print(" | ".join(f"{h:<20}" for h in header))
 print("-" * (20 * len(header) + (3 * (len(header)-1))))
 
 try:
-    for letter_idx, letter in enumerate(letters):
-        print(f"\nCollecting data for letter '{letter}'")
+    for label_idx, label in enumerate(labels):
+        print(f"\nCollecting data for label '{label}'")
         for input_idx in range(N_training):
-            collected_data = collect_single_letter(letter, input_idx)
+            collected_data = collect_single_label(label, input_idx)
             if collected_data is None:
-                print(f"Skipping sample {input_idx+1}/{N_training} for letter '{letter}' due to repeated errors.")
+                print(f"Skipping sample {input_idx+1}/{N_training} for label '{label}' due to repeated errors.")
                 continue
             # Ensure we have exactly N_v_max data points
             collected_length = len(collected_data)
@@ -260,7 +260,7 @@ try:
             std_vel_mag = [np.std(mags) if mags else 0.0 for mags in vel_mag_lists]
             
             # Prepare the row data
-            row = [letter, input_idx + 1]
+            row = [label, input_idx + 1]
             for sensor in range(5):
                 row.extend([
                     mean_accel_mag[sensor],
