@@ -4,14 +4,12 @@ import time
 import numpy as np
 import argparse
 import math
-import pandas as pd
 import torch
-import subprocess
-from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.nn.functional as F
 import joblib
 import sys
+from pyfiglet import Figlet  # For large text display
 
 # Step 1: Define the MLP Model Architecture (Must match the trained model)
 class MLP(nn.Module):
@@ -36,38 +34,19 @@ class MLP(nn.Module):
         out = self.fc3(out)
         return out
 
-def play_audio_on_pi(label):
-    """
-    Plays the corresponding audio file for the predicted label.
-    
-    Args:
-        label (str): The predicted label (e.g., 'A' or 'milk').
-    """
-    # Replace spaces or special characters in labels to match file naming conventions
-    sanitized_label = label.replace(" ", "_").replace("-", "_")
-    audio_path = f"/home/rp/copied_repo/audio_files/{sanitized_label}.wav"
-    try:
-        subprocess.run(["aplay", audio_path], check=True)
-    except FileNotFoundError:
-        print(f"Audio file for '{label}' not found at {audio_path}.")
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to play audio on Raspberry Pi: {e}")
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-
 # Step 2: Define Command-Line Arguments
 parser = argparse.ArgumentParser(description="ASL Inference Script using Trained MLP Model.")
-parser.add_argument("--model_path", type=str, default='asl_mlp_model_will_A-Z.pth', help="Path to the trained MLP model (.pth file)")
-parser.add_argument("--scaler_path", type=str, default='asl_scaler_eric.save', help="Path to the saved StandardScaler (.save file)")
-parser.add_argument("--label_encoder_path", type=str, default='asl_label_encoder_eric.save', help="Path to the saved LabelEncoder (.save file)")
-parser.add_argument("--hidden_sizes", type=int, nargs='+', help="Hidden layer sizes matching the trained model", default=[64, 32])
-parser.add_argument("--input_size", type=int, default=30, help="Number of input features")
-parser.add_argument("--num_classes", type=int, default=22, help="Number of classes (letters + words)")
+parser.add_argument("--model_path", type=str, default='asl_mlp_model_will_512-256.pth', help="Path to the trained MLP model (.pth file)")
+parser.add_argument("--scaler_path", type=str, default='asl_scaler_will_512-256.save', help="Path to the saved StandardScaler (.save file)")
+parser.add_argument("--label_encoder_path", type=str, default='asl_label_encoder_will_512-256.save', help="Path to the saved LabelEncoder (.save file)")
+parser.add_argument("--hidden_sizes", type=int, nargs='+', help="Hidden layer sizes matching the trained model", default=[512, 256])
+parser.add_argument("--input_size", type=int, default=60, help="Number of input features")
+parser.add_argument("--num_classes", type=int, default=26, help="Number of classes (letters A-Z)")
 parser.add_argument("--time_steps", type=int, default=32, help="Number of time steps to collect data")
 parser.add_argument("--num_sensors", type=int, default=5, help="Number of MPU6050 sensors")
-parser.add_argument("--retry_limit", type=int, default=5, help="Maximum number of retries for I2C communication")
+parser.add_argument("--retry_limit", type=int, default=10, help="Maximum number of retries for I2C communication")
 parser.add_argument("--time_delta", type=float, default=0.02, help="Time delay between sensor reads in seconds (default 20ms)")
-parser.add_argument("--threshold", type=float, default=0.2, help="Probability threshold for prediction (default 80%)")
+parser.add_argument("--threshold", type=float, default=0.6, help="Probability threshold for prediction (default 60%)")
 
 args = parser.parse_args()
 
@@ -122,9 +101,9 @@ def select_channel(channel, retry_count=0):
         bus.write_byte(TCA9548A_ADDRESS, 1 << channel)
         return True
     except OSError as e:
-        if e.errno in [121, 5]:  # Remote I/O error or Input/output error
+        if e.errno in [121, 5, 110]:  # Remote I/O error, Input/output error, Connection timed out
             if retry_count < args.retry_limit:
-                print(f"OSError {e.errno}: Error selecting channel {channel}. Retrying ({retry_count + 1}/{args.retry_limit})...")
+                print(f"OSError {e.errno}: {e.strerror} while selecting channel {channel}. Retrying ({retry_count + 1}/{args.retry_limit})...")
                 time.sleep(0.1)  # Wait before retrying
                 return select_channel(channel, retry_count + 1)
             else:
@@ -199,21 +178,20 @@ def read_channel(channel, previous_data, retry_count=0):
     if previous_data is not None:
         delta = {key: data[key] - previous_data[key] for key in data}
     else:
-        delta = {key: 0 for key in data}  # For the first read, use raw data as delta
+        delta = {key: 0 for key in data}  # For the first read, use zero delta
     return delta, data
 
 # Step 8: Feature Extraction Function
 def collect_features():
     """
     Collects features from all sensors over defined time steps.
-    
+
     Returns:
-        list: A feature vector containing mean and std deviations of accelerometer and gyroscope magnitudes,
-              as well as mean and std of velocity magnitudes for each sensor.
+        list: A feature vector containing mean and std deviations of accelerometer and gyroscope data for each axis.
     """
     collected_data = []
     base_data_list = [None] * args.num_sensors  # Initialize base data for each sensor
-    
+
     # Step 1: Collect base data from all sensors
     print("Collecting base data from all sensors...")
     for sensor_idx in range(args.num_sensors):
@@ -223,15 +201,13 @@ def collect_features():
             return None
         base_data_list[sensor_idx] = data
     print("Base data collection complete.")
-    
+
     previous_data_list = base_data_list.copy()  # Initialize previous data
-    
+
     # Step 2: Collect data over defined time steps
-    current_velocity = [0.0 for _ in range(args.num_sensors)]  # Initialize velocity for each sensor
-    accel_mag_lists = [[] for _ in range(args.num_sensors)]
-    gyro_mag_lists = [[] for _ in range(args.num_sensors)]
-    vel_mag_lists = [[] for _ in range(args.num_sensors)]
-    
+    accel_axis_lists = [ {'x': [], 'y': [], 'z': []} for _ in range(args.num_sensors) ]
+    gyro_axis_lists = [ {'x': [], 'y': [], 'z': []} for _ in range(args.num_sensors) ]
+
     print(f"Collecting data over {args.time_steps} time steps...")
     for step in range(args.time_steps):
         for sensor_idx in range(args.num_sensors):
@@ -240,31 +216,46 @@ def collect_features():
                 print(f"Failed to read from sensor {sensor_idx} at time step {step + 1}. Aborting this collection.")
                 return None
             previous_data_list[sensor_idx] = data
-            # Calculate magnitudes
-            accel_mag = math.sqrt(delta['accel_x']**2 + delta['accel_y']**2 + delta['accel_z']**2)
-            gyro_mag = math.sqrt(delta['gyro_x']**2 + delta['gyro_y']**2 + delta['gyro_z']**2)
-            accel_mag_lists[sensor_idx].append(accel_mag)
-            gyro_mag_lists[sensor_idx].append(gyro_mag)
-            # Update velocity using Euler integration
-            current_velocity[sensor_idx] += accel_mag * args.time_delta
-            vel_mag = current_velocity[sensor_idx]
-            vel_mag_lists[sensor_idx].append(vel_mag)
+            # Append delta values per axis
+            accel_axis_lists[sensor_idx]['x'].append(delta['accel_x'])
+            accel_axis_lists[sensor_idx]['y'].append(delta['accel_y'])
+            accel_axis_lists[sensor_idx]['z'].append(delta['accel_z'])
+            gyro_axis_lists[sensor_idx]['x'].append(delta['gyro_x'])
+            gyro_axis_lists[sensor_idx]['y'].append(delta['gyro_y'])
+            gyro_axis_lists[sensor_idx]['z'].append(delta['gyro_z'])
         print(f"Time step {step + 1}/{args.time_steps} collected.")
         time.sleep(args.time_delta)  # Wait before next time step
-    
+
     print("Data collection complete.")
-    
+
     # Step 3: Compute mean and std for each sensor's features
     feature_vector = []
     for sensor_idx in range(args.num_sensors):
-        mean_accel = np.mean(accel_mag_lists[sensor_idx]) if accel_mag_lists[sensor_idx] else 0.0
-        std_accel = np.std(accel_mag_lists[sensor_idx]) if accel_mag_lists[sensor_idx] else 0.0
-        mean_gyro = np.mean(gyro_mag_lists[sensor_idx]) if gyro_mag_lists[sensor_idx] else 0.0
-        std_gyro = np.std(gyro_mag_lists[sensor_idx]) if gyro_mag_lists[sensor_idx] else 0.0
-        mean_vel = np.mean(vel_mag_lists[sensor_idx]) if vel_mag_lists[sensor_idx] else 0.0
-        std_vel = np.std(vel_mag_lists[sensor_idx]) if vel_mag_lists[sensor_idx] else 0.0
-        feature_vector.extend([mean_accel, std_accel, mean_gyro, std_gyro, mean_vel, std_vel])
-    
+        # Accelerometer
+        mean_accel_x = np.mean(accel_axis_lists[sensor_idx]['x']) if accel_axis_lists[sensor_idx]['x'] else 0.0
+        std_accel_x = np.std(accel_axis_lists[sensor_idx]['x']) if accel_axis_lists[sensor_idx]['x'] else 0.0
+        mean_accel_y = np.mean(accel_axis_lists[sensor_idx]['y']) if accel_axis_lists[sensor_idx]['y'] else 0.0
+        std_accel_y = np.std(accel_axis_lists[sensor_idx]['y']) if accel_axis_lists[sensor_idx]['y'] else 0.0
+        mean_accel_z = np.mean(accel_axis_lists[sensor_idx]['z']) if accel_axis_lists[sensor_idx]['z'] else 0.0
+        std_accel_z = np.std(accel_axis_lists[sensor_idx]['z']) if accel_axis_lists[sensor_idx]['z'] else 0.0
+        
+        # Gyroscope
+        mean_gyro_x = np.mean(gyro_axis_lists[sensor_idx]['x']) if gyro_axis_lists[sensor_idx]['x'] else 0.0
+        std_gyro_x = np.std(gyro_axis_lists[sensor_idx]['x']) if gyro_axis_lists[sensor_idx]['x'] else 0.0
+        mean_gyro_y = np.mean(gyro_axis_lists[sensor_idx]['y']) if gyro_axis_lists[sensor_idx]['y'] else 0.0
+        std_gyro_y = np.std(gyro_axis_lists[sensor_idx]['y']) if gyro_axis_lists[sensor_idx]['y'] else 0.0
+        mean_gyro_z = np.mean(gyro_axis_lists[sensor_idx]['z']) if gyro_axis_lists[sensor_idx]['z'] else 0.0
+        std_gyro_z = np.std(gyro_axis_lists[sensor_idx]['z']) if gyro_axis_lists[sensor_idx]['z'] else 0.0
+        
+        # Append to feature vector
+        feature_vector.extend([
+            mean_accel_x, std_accel_x,
+            mean_accel_y, std_accel_y,
+            mean_accel_z, std_accel_z,
+            mean_gyro_x, std_gyro_x,
+            mean_gyro_y, std_gyro_y,
+            mean_gyro_z, std_gyro_z
+        ])
     return feature_vector
 
 # Step 9: Prediction Function
@@ -276,31 +267,43 @@ def predict_label(feature_vector):
         feature_vector (list): The extracted feature vector.
     
     Returns:
-        tuple: (predicted_class_index, max_probability, probabilities_array)
+        tuple: (predicted_label, max_probability)
     """
     # Convert to numpy array and reshape
     feature_array = np.array(feature_vector).reshape(1, -1)
     # Scale features
-    feature_scaled = scaler.transform(feature_array)
+    try:
+        feature_scaled = scaler.transform(feature_array)
+    except ValueError as ve:
+        print(f"Scaling error: {ve}")
+        return None, None
     # Convert to tensor
     input_tensor = torch.tensor(feature_scaled, dtype=torch.float32).to(device)
     # Forward pass
     with torch.no_grad():
+        start_time = time.time()
         output = model(input_tensor)
+        end_time = time.time()
+        inference_time = end_time - start_time
+        print(f"Inference time: {inference_time * 1000:.2f} ms")
         probabilities = F.softmax(output, dim=1).cpu().numpy()[0]
     # Get the highest probability
     max_prob = np.max(probabilities)
     predicted_class = np.argmax(probabilities)
-    return predicted_class, max_prob, probabilities
+    predicted_label = label_encoder.inverse_transform([predicted_class])[0]
+    return predicted_label, max_prob
 
 # Step 10: Main Inference Loop
 def main():
-    print("\n--- ASL Label Inference Started ---\n")
+    print("\n--- ASL Inference Started ---\n")
     print("Instructions:")
     print("1. Press Enter to perform an ASL gesture.")
-    print(f"2. The system will collect data and attempt to predict the label.")
+    print("2. The system will collect data and attempt to predict the letter.")
     print(f"3. Prediction will be displayed if confidence > {args.threshold * 100:.0f}%.")
     print("4. Press Ctrl+C to exit.\n")
+    
+    # Initialize Figlet for large text display
+    figlet = Figlet(font='slant')  # Choose a font style you prefer
     
     try:
         while True:
@@ -309,12 +312,15 @@ def main():
             if feature_vector is None:
                 print("Data collection failed. Please try again.\n")
                 continue
-            predicted_class, max_prob, probabilities = predict_label(feature_vector)
+            predicted_label, max_prob = predict_label(feature_vector)
+            if predicted_label is None:
+                print("Prediction failed due to scaling error. Please try again.\n")
+                continue
             if max_prob >= args.threshold:
-                predicted_label = label_encoder.inverse_transform([predicted_class])[0]
-                print(f"Predicted Label: {predicted_label} (Confidence: {max_prob * 100:.2f}%)\n")
-                # Play the corresponding audio
-                play_audio_on_pi(predicted_label)
+                # Display the predicted label in large text
+                large_text = figlet.renderText(predicted_label)
+                print(f"\n{'='*50}\n{large_text}{'='*50}\n")
+                print(f"Confidence: {max_prob * 100:.2f}%\n")
             else:
                 print(f"No confident prediction made (Highest Confidence: {max_prob * 100:.2f}%)\n")
     except KeyboardInterrupt:
